@@ -1,80 +1,146 @@
 import pandas as pd
 import numpy as np
 
-class DataBalancer():
+class DataPreprocessing:
+    def clean_data(self, df):
+        try:
+            # Verificar si el DataFrame es nulo o vacío
+            if df is None or df.empty:
+                raise ValueError("El DataFrame es nulo o vacío.")
+
+            # Verificar si hay valores faltantes (NAs) en el DataFrame
+            if df.isnull().any().any():
+                # Si hay NAs, eliminar las filas con valores faltantes
+                df = df.dropna()
+                return df
+            else:
+                raise ValueError("No se encontraron valores faltantes en el DataFrame.")
+
+        except Exception as e:
+            print(f"Error al limpiar datos: {str(e)}")
+            return None
+
+class DataBalancer(DataPreprocessing):
 
     def __init__(self, balance_type='undersampling'):
         self.balance_type = balance_type
 
-    def data_preprocessing(self,df):
-        if df.isna().any().any():
-            df = df.dropna()
-        return df
+    def balance_data(self, dataframe, target_column):
+        self.target_column = target_column
+        preprocessed_df = self.clean_data(dataframe)
+        self.preprocessed_df = preprocessed_df
+        # df[self.target_column] = df[self.target_column].astype(int)
+        # Si preprocessed_df es None, utilizar el DataFrame original
+        if preprocessed_df is None:
+            preprocessed_df = dataframe
+            self.preprocessed_df = preprocessed_df
+        X = preprocessed_df.drop(columns=[target_column])
+        y = preprocessed_df[target_column].astype(int)
 
-    def balance_data(self,dataframe,target_column):
-
-        df_preprocessed = self.data_preprocessing(dataframe)
-
-        X = df_preprocessed.drop(columns=[target_column])
-        y = df_preprocessed[target_column]
-
-        #We have to check what kind of balance the person wants to do.
         if self.balance_type == 'undersampling':
             balanced_X, balanced_y = self.undersampling(X, y)
+            return pd.concat([balanced_X, balanced_y], axis=1)
         elif self.balance_type == 'oversampling':
             balanced_X, balanced_y = self.oversampling(X, y)
+            return pd.concat([balanced_X, balanced_y], axis=1)
         elif self.balance_type == 'oversampling_sdv':
-            balanced_X, balanced_y = self.oversampling_sdv(X, y)
+            df = self.oversampling_sdv()
+            return df
         elif self.balance_type == 'mix_sampling':
             balanced_X, balanced_y = self.mix_sampling(X, y)
+            return pd.concat([balanced_X, balanced_y], axis=1)
         else:
             raise ValueError("Invalid balance_type. Choose from 'undersampling', 'oversampling', or 'mix_sampling'.")
+
         
-        return pd.concat([balanced_X,balanced_y],axis=1)
 
 
     def undersampling(self,X,y):
 
-        from sklearn.svm import LinearSVC
-        from sklearn.metrics import roc_auc_score, ConfusionMatrixDisplay,confusion_matrix
-
+        from collections import Counter
         from imblearn.under_sampling import NearMiss
-        from imblearn.pipeline import make_pipeline
-        from imblearn.metrics import classification_report_imbalanced
 
         X = X.copy()
         y = y.copy()
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=0)
-        undersampler = NearMiss(sampling_strategy='auto',version=2)
-        classifier = LinearSVC()
+        print('Forma dataset original %s' % Counter(y))        
+        nearM = NearMiss()
+        X_res, y_res = nearM.fit_resample(X, y)
+        print('Forma datased remuestreado %s' % Counter(y_res))
+        
+        X_res_df = pd.DataFrame(X_res, columns=X.columns)
+        y_res_df = pd.Series(y_res, name=self.target_column)
 
-        model = make_pipeline(undersampler, classifier)
-        model.fit(X_train,y_train)
-        y_pred = model.predict(X_test)
-        # cm = confusion_matrix(y_test, y_pred, labels=model.classes_)
-        print(classification_report_imbalanced(y_test, y_pred))
-        print('AUC = ' + str(roc_auc_score(y_test, y_pred)))
-    
-        return X,y
+        return X_res_df,y_res_df
+
     def oversampling(self,X,y):
 
-        from sklearn.model_selection import train_test_split
         from imblearn.over_sampling import RandomOverSampler
+        from collections import Counter
         
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=0)
-        os =  RandomOverSampler(ratio=0.5)
-        X_train_res, y_train_res = os.fit_sample(X_train, y_train)
-        return X_train_res, y_train_res
+        X = X.copy()
+        y = y.copy()
 
-    def oversampling_sdv(self,X,y):
-        pass
+        print('Forma dataset original %s' % Counter(y))        
+        nearM = RandomOverSampler(random_state=7627)
+        X_res, y_res = nearM.fit_resample(X, y)
+        print('Forma datased remuestreado %s' % Counter(y_res))
+        
+        X_res_df = pd.DataFrame(X_res, columns=X.columns)
+        y_res_df = pd.Series(y_res, name=self.target_column)
 
+        return X_res_df,y_res_df
+
+    def oversampling_sdv(self):
+        import os
+        import time
+        from sdv.metadata import SingleTableMetadata
+        from sdv.single_table import GaussianCopulaSynthesizer,CTGANSynthesizer
+
+        df = self.preprocessed_df
+        clase_min = pd.DataFrame(df[self.target_column].value_counts().sort_values()).index[0]
+        minoritaria = df[df[self.target_column] == clase_min]
+        
+        n_datos_sinteticos = df[self.target_column].value_counts().sort_values().max()-len(minoritaria)
+        metadata = SingleTableMetadata()
+        metadata.detect_from_dataframe(data=df)
+        metadata.visualize()
+
+        model = CTGANSynthesizer(metadata,
+                                 enforce_rounding=False)
+                                        #default_distribution='norm')
+
+        model.fit(minoritaria)
+
+        new_data = model.sample(num_rows=n_datos_sinteticos)
+
+        df_final = pd.concat([df,new_data],ignore_index=True)
+        # print(df_final.shape)
+        # print(n_datos_sinteticos)
+        # print(df[self.target_column].value_counts().sort_values().max())
+
+        return df_final
+
+        
     def mix_sampling(self,X,y):
-        pass
+        from imblearn.combine import SMOTETomek
+        from collections import Counter
+        
+        X = X.copy()
+        y = y.copy()
+
+        print('Forma dataset original %s' % Counter(y))        
+        nearM = SMOTETomek(random_state=45678,sampling_strategy=0.678)
+        X_res, y_res = nearM.fit_resample(X, y)
+        print('Forma datased remuestreado %s' % Counter(y_res))
+        
+        X_res_df = pd.DataFrame(X_res, columns=X.columns)
+        y_res_df = pd.Series(y_res, name=self.target_column)
+
+        return X_res_df,y_res_df
 
 if __name__ == '__main__':
-    df = pd.read_csv('C:/Users/Asus/Documents/Mondragon/bdata4año/Programacion/Trabajo_grupal/Thyroids.csv')
-    datos = DataBalancer('undersampling')
-    datos.balance_data(df,'clase')
-            
+    df = pd.read_csv('C:/Users/Asus/Documents/Mondragon/bdata4año/Programacion/Trabajo_iker_unai_bueno/Thyroids.csv')
+    datos = DataBalancer('oversampling_sdv')
+    df_balanceado = datos.balance_data(df,'clase')
+    df_balanceado
