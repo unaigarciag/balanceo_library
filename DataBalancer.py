@@ -71,13 +71,13 @@ class DataBalancer(DataPreprocessing):
             balanced_X, balanced_y = self.oversampling(X, y)
             return pd.concat([balanced_X, balanced_y], axis=1)
         elif self.balance_type == 'oversampling_sdv':
-            df = self.oversampling_sdv(dataframe)
+            df = self.oversampling_sdv()
             return df
         elif self.balance_type == 'mix_sampling':
             balanced_X, balanced_y = self.mix_sampling(X, y)
             return pd.concat([balanced_X, balanced_y], axis=1)
         else:
-            raise ValueError("Invalid balance_type. Choose from 'undersampling', 'oversampling', or 'mix_sampling'.")
+            raise ValueError("Tipo de balanceo invalido. Elige entre 'undersampling', 'oversampling', 'oversampling_sdv' o'mix_sampling'.")
 
 
     def undersampling(self,X,y):
